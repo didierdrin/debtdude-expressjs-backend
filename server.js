@@ -291,4 +291,9 @@ app.get('/health', (req, res) => {
 app.listen(PORT, () => {
   console.log(`DebtDude backend server running on port ${PORT}`);
   console.log(`Health check: http://localhost:${PORT}/health`);
+  
+  // Keep-alive ping to prevent downtime
+  setInterval(() => {
+    axios.get(`http://localhost:${PORT}/health`).catch(() => {});
+  }, 14 * 60 * 1000); // Ping every 14 minutes
 });
