@@ -91,44 +91,66 @@ function requiresTransactionData(message) {
 }
 
 async function generateChatResponse(message, userTransactions) {
-  try {
-    // Check if question requires transaction data
-    if (requiresTransactionData(message)) {
-      if (!userTransactions || userTransactions.length === 0) {
-        return null; // No fallback - return null if no transaction data available
-      }
-      
-      const analysis = analyzeTransactions(userTransactions);
-      const prompt = `You are DebtDude, a financial assistant. Based on the user's Firebase transaction data and their message: "${message}", provide a helpful response about their finances.
-      
-      Transaction analysis:
-      ${JSON.stringify(analysis, null, 2)}
-      
-      Raw transactions (last 10):
-      ${JSON.stringify(userTransactions.slice(-10), null, 2)}
-      
-      Respond in a conversational, helpful manner. Keep responses concise and actionable. Focus specifically on answering their question using the transaction data.`;
-    } else {
-      // For general questions, don't require transaction data
-      const prompt = `You are DebtDude, a financial assistant. The user asked: "${message}"
-      
-      Provide a helpful response about general financial advice, budgeting tips, or financial concepts. Keep responses concise and actionable.`;
+  let prompt;
+  
+  // Check if question requires transaction data
+  if (requiresTransactionData(message)) {
+    if (!userTransactions || userTransactions.length === 0) {
+      return null; // No fallback - return null if no transaction data available
     }
     
-    const response = await axios.post(`${process.env.GEMINI_API_URL}?key=${process.env.GEMINI_API_KEY}`, {
-      contents: [{
-        parts: [{ text: prompt }]
-      }],
-      generationConfig: {
-        temperature: 0.7,
-        maxOutputTokens: 500
+    const analysis = analyzeTransactions(userTransactions);
+    prompt = `You are DebtDude, a financial assistant. Based on the user's Firebase transaction data and their message: "${message}", provide a helpful response about their finances.
+    
+    Transaction analysis:
+    ${JSON.stringify(analysis, null, 2)}
+    
+    Raw transactions (last 10):
+    ${JSON.stringify(userTransactions.slice(-10), null, 2)}
+    
+    Respond in a conversational, helpful manner. Keep responses concise and actionable. Focus specifically on answering their question using the transaction data.`;
+  } else {
+    // For general questions, don't require transaction data
+    prompt = `You are DebtDude, a financial assistant. The user asked: "${message}"
+    
+    Provide a helpful response about general financial advice, budgeting tips, or financial concepts. Keep responses concise and actionable.`;
+  }
+  
+  // Try DeepSeek first
+  try {
+    const deepseekResponse = await axios.post('https://api.deepseek.com/chat/completions', {
+      model: 'deepseek-chat',
+      messages: [{ role: 'user', content: prompt }],
+      temperature: 0.7,
+      max_tokens: 500
+    }, {
+      headers: {
+        'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
+        'Content-Type': 'application/json'
       }
     });
     
-    return response.data.candidates[0].content.parts[0].text;
-  } catch (error) {
-    console.error('Chat API error:', error);
-    return null; // No fallback responses
+    return deepseekResponse.data.choices[0].message.content;
+  } catch (deepseekError) {
+    console.log('DeepSeek unavailable, trying Gemini:', deepseekError.message);
+    
+    // Fallback to Gemini
+    try {
+      const geminiResponse = await axios.post(`${process.env.GEMINI_API_URL}?key=${process.env.GEMINI_API_KEY}`, {
+        contents: [{
+          parts: [{ text: prompt }]
+        }],
+        generationConfig: {
+          temperature: 0.7,
+          maxOutputTokens: 500
+        }
+      });
+      
+      return geminiResponse.data.candidates[0].content.parts[0].text;
+    } catch (geminiError) {
+      console.error('Both APIs failed:', geminiError.message);
+      return null;
+    }
   }
 }
 
