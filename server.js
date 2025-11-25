@@ -78,14 +78,42 @@ function getTopPeople(transactions) {
     .slice(0, 5);
 }
 
+function requiresTransactionData(message) {
+  const transactionKeywords = [
+    'balance', 'spend', 'spent', 'expense', 'income', 'receive', 'received',
+    'transaction', 'money', 'payment', 'transfer', 'budget', 'financial',
+    'analysis', 'summary', 'total', 'amount', 'cost', 'price', 'bill'
+  ];
+  
+  return transactionKeywords.some(keyword => 
+    message.toLowerCase().includes(keyword)
+  );
+}
+
 async function generateChatResponse(message, userTransactions) {
   try {
-    const prompt = `You are DebtDude, a financial assistant. Based on the user's transaction data and their message: "${message}", provide a helpful response about their finances.
-    
-    Recent transactions summary:
-    ${userTransactions ? JSON.stringify(analyzeTransactions(userTransactions), null, 2) : 'No transaction data available'}
-    
-    Respond in a conversational, helpful manner. Keep responses concise and actionable.`;
+    // Check if question requires transaction data
+    if (requiresTransactionData(message)) {
+      if (!userTransactions || userTransactions.length === 0) {
+        return null; // No fallback - return null if no transaction data available
+      }
+      
+      const analysis = analyzeTransactions(userTransactions);
+      const prompt = `You are DebtDude, a financial assistant. Based on the user's Firebase transaction data and their message: "${message}", provide a helpful response about their finances.
+      
+      Transaction analysis:
+      ${JSON.stringify(analysis, null, 2)}
+      
+      Raw transactions (last 10):
+      ${JSON.stringify(userTransactions.slice(-10), null, 2)}
+      
+      Respond in a conversational, helpful manner. Keep responses concise and actionable. Focus specifically on answering their question using the transaction data.`;
+    } else {
+      // For general questions, don't require transaction data
+      const prompt = `You are DebtDude, a financial assistant. The user asked: "${message}"
+      
+      Provide a helpful response about general financial advice, budgeting tips, or financial concepts. Keep responses concise and actionable.`;
+    }
     
     const response = await axios.post(`${process.env.GEMINI_API_URL}?key=${process.env.GEMINI_API_KEY}`, {
       contents: [{
@@ -100,7 +128,7 @@ async function generateChatResponse(message, userTransactions) {
     return response.data.candidates[0].content.parts[0].text;
   } catch (error) {
     console.error('Chat API error:', error);
-    return 'Sorry, I\'m having trouble processing your request right now. Please try again later.';
+    return null; // No fallback responses
   }
 }
 
@@ -217,6 +245,13 @@ app.post('/api/conversations/:id/messages', async (req, res) => {
     
     // Generate AI response
     const aiResponse = await generateChatResponse(message, transactions);
+    
+    // If no response generated (requires transaction data but none provided), return error
+    if (aiResponse === null) {
+      return res.status(400).json({ 
+        error: 'This question requires transaction data to answer properly. Please ensure your Firebase transactions are synced.' 
+      });
+    }
     
     const aiMessage = {
       id: (Date.now() + 1).toString(),
